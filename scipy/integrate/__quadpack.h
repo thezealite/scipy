@@ -1013,5 +1013,4 @@ static PyObject *quadpack_qawse(PyObject *dummy, PyObject *args) {
   Py_XDECREF(ap_elist);
   Py_XDECREF(ap_iord);
   return NULL;
-  
 }
