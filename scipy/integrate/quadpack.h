@@ -46,12 +46,25 @@ static jmp_buf quadpack_jmpbuf;
 static double (*quadpack_ctypes_function)(double) = NULL;
 
 static PyObject *quadpack_error;
+static double *global_args;
+static double (*global_function) (int, double *) = NULL;
+static int global_n_args;
+
+/* Re-entrant capability for multivariate ctypes */
+typedef struct {
+    double *z_args0;
+    int z_nargs0;
+    double (*z_f0) (int, double *);
+    double *z_args1;
+    int z_nargs1;
+    double (*z_f1) (int, double *);
+} ZStorage;
 
 /* Stack Storage for re-entrant capability */
 typedef struct {
     void *global0;
     void *global1;
-    jmp_buf jmp;    
+    jmp_buf jmp;
     PyObject *arg;
 } QStorage;
 
@@ -119,13 +132,77 @@ restore_ctypes_func(QStorage *store) {
 }
 
 
+static int 
+init_c_multivariate(ZStorage * store, PyObject * f, int n, double args[n])
+{
+    /*Initialize function of n+1 variables
+     * Parameters: 
+     * store - Zstorage pointer to hold current state of stack
+     * f - Pyobject function pointer to function to evaluate
+     * n - integer number of extra parameters 
+     * args - double array of length n with parameters x[1]....x[n]
+     * Output:
+     * NPY_FAIL on failure 
+     * NPY_SUCCEED on success
+     */
 
+    /*Store current parameters */
+    store->z_f0 = global_function;
+    store->z_nargs0 = global_n_args;
+    store->z_args0 = global_args;
 
+    /*Store new parameters */
+    store->z_f1 = get_ctypes_function_pointer(f);
+    store->z_nargs1 = n;
+    store->z_args1 = args;
+    if (store->z_f1 == NULL)
+      return NPY_FAIL;
 
+    /*Set globals */
+    global_function = store->z_f1;
+    global_n_args = store->z_nargs1;
+    global_args = store->z_args1;
+    return NPY_SUCCEED;
+}
 
+static double 
+call_c_multivariate(double *x)
+{
+    /*Evaluates user defined function as function of one variable after initialization.
+     * Parameter: 
+     * x: Pointer to double x at which to evaluate function
+     * Output: 
+     * Function evaluated at x with initialized parameters
+     * Evaluate at  [*x, concatenated with params [x1, . . . , xn]] */
 
+    global_args[0] = *x;
+    return global_function(global_n_args, global_args);
+}
 
+static void 
+restore_c_multivariate(ZStorage * store)
+{
+    global_function = store->z_f0;
+    global_n_args = store->z_nargs0;
+    global_args = store->z_args0;
+    return;
+}
 
-
-
-
+static double*
+c_array_from_tuple(PyObject * tuple)
+{
+    /* Accepts Python tuple and converts to double array in c for use in
+     * multivariate ctypes */
+    if (!PyTuple_CheckExact(tuple))
+      return NULL;    /*Ensure python tuple is passed in */
+    Py_ssize_t nargs = PyTuple_Size(tuple);
+    Py_ssize_t i = 0;
+    double *array = (double *) malloc(sizeof(double) * (nargs + 1));
+    PyObject *item = NULL;
+    array[0] = 0.0;
+    for (i = 0; i < nargs; i++) {
+      item = PyTuple_GetItem(tuple, i);
+      array[i + 1] = PyFloat_AsDouble(item);
+    }
+    return array;
+}
