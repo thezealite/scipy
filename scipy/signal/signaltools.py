@@ -15,7 +15,7 @@ from numpy import (allclose, angle, arange, argsort, array, asarray,
                    atleast_1d, atleast_2d, cast, dot, exp, expand_dims,
                    iscomplexobj, isscalar, mean, ndarray, newaxis, ones, pi,
                    poly, polyadd, polyder, polydiv, polymul, polysub, polyval,
-                   prod, product, r_, rank, ravel, real_if_close, reshape,
+                   prod, product, r_, ravel, real_if_close, reshape,
                    roots, sort, sum, take, transpose, unique, where, zeros)
 import numpy as np
 from scipy.misc import factorial
@@ -103,10 +103,35 @@ def correlate(in1, in2, mode='full'):
 
     Notes
     -----
-    The correlation z of two arrays x and y of rank d is defined as:
+    The correlation z of two d-dimensional arrays x and y is defined as:
 
       z[...,k,...] = sum[..., i_l, ...]
                          x[..., i_l,...] * conj(y[..., i_l + k,...])
+
+    Examples
+    --------
+    Implement a matched filter using cross-correlation, to recover a signal
+    that has passed through a noisy channel.
+
+    >>> from scipy import signal
+    >>> sig = np.repeat([0., 1., 1., 0., 1., 0., 0., 1.], 128)
+    >>> sig_noise = sig + np.random.randn(len(sig))
+    >>> corr = signal.correlate(sig_noise, np.ones(128), mode='same') / 128
+
+    >>> import matplotlib.pyplot as plt
+    >>> clock = np.arange(64, len(sig), 128)
+    >>> fig, (ax_orig, ax_noise, ax_corr) = plt.subplots(3, 1, sharex=True)
+    >>> ax_orig.plot(sig)
+    >>> ax_orig.plot(clock, sig[clock], 'ro')
+    >>> ax_orig.set_title('Original signal')
+    >>> ax_noise.plot(sig_noise)
+    >>> ax_noise.set_title('Signal with noise')
+    >>> ax_corr.plot(corr)
+    >>> ax_corr.plot(clock, corr[clock], 'ro')
+    >>> ax_corr.axhline(0.5, ls=':')
+    >>> ax_corr.set_title('Cross-correlated with rectangular pulse')
+    >>> ax_orig.margins(0, 0.1)
+    >>> fig.show()
 
     """
     in1 = asarray(in1)
@@ -119,10 +144,10 @@ def correlate(in1, in2, mode='full'):
         raise ValueError("Acceptable mode flags are 'valid',"
                          " 'same', or 'full'.")
 
-    if rank(in1) == rank(in2) == 0:
+    if in1.ndim == in2.ndim == 0:
         return in1 * in2
     elif not in1.ndim == in2.ndim:
-        raise ValueError("in1 and in2 should have the same rank")
+        raise ValueError("in1 and in2 should have the same dimensionality")
 
     if mode == 'valid':
         _check_valid_mode_shapes(in1.shape, in2.shape)
@@ -244,14 +269,53 @@ def fftconvolve(in1, in2, mode="full"):
         An N-dimensional array containing a subset of the discrete linear
         convolution of `in1` with `in2`.
 
+    Examples
+    --------
+    Autocorrelation of white noise is an impulse.  (This is at least 100 times
+    as fast as `convolve`.)
+
+    >>> from scipy import signal
+    >>> sig = np.random.randn(1000)
+    >>> autocorr = signal.fftconvolve(sig, sig[::-1], mode='full')
+
+    >>> import matplotlib.pyplot as plt
+    >>> fig, (ax_orig, ax_mag) = plt.subplots(2, 1)
+    >>> ax_orig.plot(sig)
+    >>> ax_orig.set_title('White noise')
+    >>> ax_mag.plot(np.arange(-len(sig)+1,len(sig)), autocorr)
+    >>> ax_mag.set_title('Autocorrelation')
+    >>> fig.show()
+
+    Gaussian blur implemented using FFT convolution.  Notice the dark borders
+    around the image, due to the zero-padding beyond its boundaries.
+    The `convolve2d` function allows for other types of image boundaries,
+    but is far slower.
+
+    >>> from scipy import misc
+    >>> lena = misc.lena()
+    >>> kernel = np.outer(signal.gaussian(70, 8), signal.gaussian(70, 8))
+    >>> blurred = signal.fftconvolve(lena, kernel, mode='same')
+
+    >>> fig, (ax_orig, ax_kernel, ax_blurred) = plt.subplots(1, 3)
+    >>> ax_orig.imshow(lena, cmap='gray')
+    >>> ax_orig.set_title('Original')
+    >>> ax_orig.set_axis_off()
+    >>> ax_kernel.imshow(kernel, cmap='gray')
+    >>> ax_kernel.set_title('Gaussian kernel')
+    >>> ax_kernel.set_axis_off()
+    >>> ax_blurred.imshow(blurred, cmap='gray')
+    >>> ax_blurred.set_title('Blurred')
+    >>> ax_blurred.set_axis_off()
+    >>> fig.show()
+
     """
     in1 = asarray(in1)
     in2 = asarray(in2)
 
-    if rank(in1) == rank(in2) == 0:  # scalar inputs
+    if in1.ndim == in2.ndim == 0:  # scalar inputs
         return in1 * in2
     elif not in1.ndim == in2.ndim:
-        raise ValueError("in1 and in2 should have the same rank")
+        raise ValueError("in1 and in2 should have the same dimensionality")
     elif in1.size == 0 or in2.size == 0:  # empty arrays
         return array([])
 
@@ -328,7 +392,7 @@ def convolve(in1, in2, mode='full'):
     volume = asarray(in1)
     kernel = asarray(in2)
 
-    if rank(volume) == rank(kernel) == 0:
+    if volume.ndim == kernel.ndim == 0:
         return volume * kernel
 
     slice_obj = [slice(None, None, -1)] * len(kernel.shape)
@@ -537,6 +601,34 @@ def convolve2d(in1, in2, mode='full', boundary='fill', fillvalue=0):
         A 2-dimensional array containing a subset of the discrete linear
         convolution of `in1` with `in2`.
 
+    Examples
+    --------
+    Compute the gradient of an image by 2D convolution with a complex Scharr
+    operator.  (Horizontal operator is real, vertical is imaginary.)  Use
+    symmetric boundary condition to avoid creating edges at the image
+    boundaries.
+
+    >>> from scipy import signal
+    >>> from scipy import misc
+    >>> lena = misc.lena()
+    >>> scharr = np.array([[ -3-3j, 0-10j,  +3 -3j],
+    ...                    [-10+0j, 0+ 0j, +10 +0j],
+    ...                    [ -3+3j, 0+10j,  +3 +3j]]) # Gx + j*Gy
+    >>> grad = signal.convolve2d(lena, scharr, boundary='symm', mode='same')
+
+    >>> import matplotlib.pyplot as plt
+    >>> fig, (ax_orig, ax_mag, ax_ang) = plt.subplots(1, 3)
+    >>> ax_orig.imshow(lena, cmap='gray')
+    >>> ax_orig.set_title('Original')
+    >>> ax_orig.set_axis_off()
+    >>> ax_mag.imshow(np.absolute(grad), cmap='gray')
+    >>> ax_mag.set_title('Gradient magnitude')
+    >>> ax_mag.set_axis_off()
+    >>> ax_ang.imshow(np.angle(grad), cmap='hsv') # hsv is cyclic, like angles
+    >>> ax_ang.set_title('Gradient orientation')
+    >>> ax_ang.set_axis_off()
+    >>> fig.show()
+
     """
     in1 = asarray(in1)
     in2 = asarray(in2)
@@ -597,6 +689,34 @@ def correlate2d(in1, in2, mode='full', boundary='fill', fillvalue=0):
     correlate2d : ndarray
         A 2-dimensional array containing a subset of the discrete linear
         cross-correlation of `in1` with `in2`.
+
+    Examples
+    --------
+    Use 2D cross-correlation to find the location of a template in a noisy
+    image:
+
+    >>> from scipy import signal
+    >>> from scipy import misc
+    >>> lena = misc.lena() - misc.lena().mean()
+    >>> template = np.copy(lena[235:295, 310:370]) # right eye
+    >>> template -= template.mean()
+    >>> lena = lena + np.random.randn(*lena.shape) * 50 # add noise
+    >>> corr = signal.correlate2d(lena, template, boundary='symm', mode='same')
+    >>> y, x = np.unravel_index(np.argmax(corr), corr.shape) # find the match
+
+    >>> import matplotlib.pyplot as plt
+    >>> fig, (ax_orig, ax_template, ax_corr) = plt.subplots(1, 3)
+    >>> ax_orig.imshow(lena, cmap='gray')
+    >>> ax_orig.set_title('Original')
+    >>> ax_orig.set_axis_off()
+    >>> ax_template.imshow(template, cmap='gray')
+    >>> ax_template.set_title('Template')
+    >>> ax_template.set_axis_off()
+    >>> ax_corr.imshow(corr, cmap='gray')
+    >>> ax_corr.set_title('Cross-correlation')
+    >>> ax_corr.set_axis_off()
+    >>> ax_orig.plot(x, y, 'ro')
+    >>> fig.show()
 
     """
     in1 = asarray(in1)
@@ -938,7 +1058,7 @@ def hilbert2(x, N=None):
     """
     x = atleast_2d(x)
     if len(x.shape) > 2:
-        raise ValueError("x must be rank 2.")
+        raise ValueError("x must be 2-D.")
     if iscomplexobj(x):
         raise ValueError("x must be real.")
     if N is None:
@@ -1673,10 +1793,10 @@ def lfilter_zi(b, a):
     # b to be 2D.
     b = np.atleast_1d(b)
     if b.ndim != 1:
-        raise ValueError("Numerator b must be rank 1.")
+        raise ValueError("Numerator b must be 1-D.")
     a = np.atleast_1d(a)
     if a.ndim != 1:
-        raise ValueError("Denominator a must be rank 1.")
+        raise ValueError("Denominator a must be 1-D.")
 
     while len(a) > 1 and a[0] == 0.0:
         a = a[1:]
